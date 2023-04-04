@@ -649,6 +649,14 @@
                         <Param id="startOnReset" value="true"/>
                     </Personality>
                 </Block>
+                <Block location="peri[0].div_16[3]">
+                    <Alias value="clk_src_for_pwm"/>
+                    <Personality template="pclk" version="3.0">
+                        <Param id="intDivider" value="10000"/>
+                        <Param id="fracDivider" value="0"/>
+                        <Param id="startOnReset" value="true"/>
+                    </Personality>
+                </Block>
                 <Block location="peri[0].div_8[0]">
                     <Alias value="CYBSP_CSD_CLK_DIV"/>
                     <Alias value="CYBSP_CS_CLK_DIV"/>
@@ -801,22 +809,32 @@
                     </Personality>
                 </Block>
                 <Block location="tcpwm[0].cnt[0]">
-                    <Alias value="my_tick_counter"/>
-                    <Personality template="mxs40timercounter" version="1.0">
-                        <Param id="ClockPrescaler" value="CY_TCPWM_COUNTER_PRESCALER_DIVBY_1"/>
-                        <Param id="RunMode" value="CY_TCPWM_COUNTER_CONTINUOUS"/>
-                        <Param id="CountDirection" value="CY_TCPWM_COUNTER_COUNT_UP"/>
-                        <Param id="Period" value="1000"/>
-                        <Param id="CompareOrCapture" value="CY_TCPWM_COUNTER_MODE_CAPTURE"/>
+                    <Alias value="digitalPWM"/>
+                </Block>
+                <Block location="tcpwm[1].cnt[11]">
+                    <Alias value="digitalPWM"/>
+                    <Personality template="mxs40pwm" version="1.0">
+                        <Param id="PwmMode" value="CY_TCPWM_PWM_MODE_PWM"/>
+                        <Param id="ClockPrescaler" value="CY_TCPWM_PWM_PRESCALER_DIVBY_2"/>
+                        <Param id="PwmAlignment" value="CY_TCPWM_PWM_LEFT_ALIGN"/>
+                        <Param id="SwapUnderflowOverflow" value="false"/>
+                        <Param id="RunMode" value="CY_TCPWM_PWM_CONTINUOUS"/>
+                        <Param id="DeadClocks" value="0"/>
+                        <Param id="EnablePeriodSwap" value="false"/>
+                        <Param id="Period0" value="32767"/>
+                        <Param id="Period1" value="32768"/>
                         <Param id="EnableCompareSwap" value="false"/>
                         <Param id="Compare0" value="16384"/>
                         <Param id="Compare1" value="16384"/>
-                        <Param id="CaptureInput" value="CY_TCPWM_INPUT_DISABLED"/>
                         <Param id="InterruptSource" value="CY_TCPWM_INT_NONE"/>
                         <Param id="CountInput" value="CY_TCPWM_INPUT_DISABLED"/>
-                        <Param id="StopInput" value="CY_TCPWM_INPUT_DISABLED"/>
+                        <Param id="KillInput" value="CY_TCPWM_INPUT_DISABLED"/>
                         <Param id="ReloadInput" value="CY_TCPWM_INPUT_DISABLED"/>
                         <Param id="StartInput" value="CY_TCPWM_INPUT_DISABLED"/>
+                        <Param id="SwapInput" value="CY_TCPWM_INPUT_DISABLED"/>
+                        <Param id="KillMode" value="CY_TCPWM_PWM_STOP_ON_KILL"/>
+                        <Param id="InvertPwm" value="false"/>
+                        <Param id="InvertPwm_n" value="true"/>
                         <Param id="inFlash" value="true"/>
                     </Personality>
                 </Block>
@@ -851,12 +869,16 @@
                     <Port name="srss[0].clock[0].wco[0].wco_out[0]"/>
                 </Net>
                 <Net>
+                    <Port name="ioss[0].port[13].pin[7].digital_out[0]"/>
+                    <Port name="tcpwm[1].cnt[11].line_compl[0]"/>
+                </Net>
+                <Net>
                     <Port name="pass[0].sar[0].clock_sar[0]"/>
                     <Port name="peri[0].div_16[1].clk[0]"/>
                 </Net>
                 <Net>
-                    <Port name="peri[0].div_16[2].clk[0]"/>
-                    <Port name="tcpwm[0].cnt[0].clock[0]"/>
+                    <Port name="peri[0].div_16[3].clk[0]"/>
+                    <Port name="tcpwm[1].cnt[11].clock[0]"/>
                 </Net>
                 <Mux name="sense" location="csd[0].csd[0]">
                     <Arm>

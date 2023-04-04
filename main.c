@@ -162,16 +162,11 @@ int main(void)
 	Cy_SysTick_SetCallback(0,count_tick);
 //    Cy_SysTick_Init(CY_SYSTICK_CLOCK_SOURCE_CLK_TIMER, 1000000U);
 
+	//enabling PWM
+	Cy_TCPWM_PWM_Init(digitalPWM_HW, digitalPWM_NUM, &digitalPWM_config);
+	Cy_TCPWM_PWM_Enable(digitalPWM_HW, digitalPWM_NUM);
+	Cy_TCPWM_TriggerReloadOrIndex(digitalPWM_HW, digitalPWM_MASK);
 
-
-    if (CY_TCPWM_SUCCESS != Cy_TCPWM_Counter_Init(my_tick_counter_HW, my_tick_counter_NUM, &my_tick_counter_config))
-	{
-		/* Handle possible errors */
-	}
-	/* Enable the initialized counter */
-	Cy_TCPWM_Counter_Enable(my_tick_counter_HW, my_tick_counter_NUM);
-	/* Then start the counter */
-	Cy_TCPWM_TriggerStart(my_tick_counter_HW, my_tick_counter_NUM);
 
 	// enabling interrupt pin
 	setup_interrupt();
@@ -216,9 +211,20 @@ int main(void)
     	{
     		printf(" pressed = %d \r\n", pressed_counter);
     		if( pressed_counter %2 == 0)
-    			Cy_GPIO_Clr(P13_7_PORT, P13_7_NUM);
+    		{
+//    			Cy_TCPWM_TriggerStopOrKill_Single(digitalPWM_HW, digitalPWM_NUM);
+    			Cy_TCPWM_PWM_SetPeriod0(digitalPWM_HW, digitalPWM_NUM, 16384);
+//				Cy_TCPWM_TriggerStart_Single(digitalPWM_HW, digitalPWM_NUM);
+    		}
+//    			Cy_GPIO_Clr(P13_7_PORT, P13_7_NUM);
     		else
-    			Cy_GPIO_Set(P13_7_PORT, P13_7_NUM);
+    		{
+//    			Cy_TCPWM_TriggerStopOrKill_Single(digitalPWM_HW, digitalPWM_NUM);
+    			Cy_TCPWM_PWM_SetPeriod0(digitalPWM_HW, digitalPWM_NUM, 32767);
+//    			Cy_TCPWM_PWM_SetCounter(digitalPWM_HW, digitalPWM_NUM, 100);
+//				Cy_TCPWM_TriggerStart_Single(digitalPWM_HW, digitalPWM_NUM);
+    		}
+//    			Cy_GPIO_Set(P13_7_PORT, P13_7_NUM);
     		pressed_state =0;
     	}
 
