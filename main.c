@@ -48,6 +48,7 @@
 #include "cy_retarget_io.h"
 #include "cy_pdl.h"		// because using PDL
 #include "cy_systick.h"
+#include "stdbool.h"
 /*******************************************************************************
 * Macros
 *******************************************************************************/
@@ -67,6 +68,62 @@ void count_tick (){
 	timeTick++;
 }
 uint32_t getTick(){return timeTick;}
+
+
+
+/*****************************************/
+/* 				PDM microphone			 */
+/*****************************************/
+/* Define how many samples in a frame */
+#define FRAME_SIZE                  (1024)
+/* Noise threshold hysteresis */
+#define THRESHOLD_HYSTERESIS        3u
+/* Volume ratio for noise and print purposes */
+#define VOLUME_RATIO                (4*FRAME_SIZE)
+/* Desired sample rate. Typical values: 8/16/22.05/32/44.1/48kHz */
+#define SAMPLE_RATE_HZ              8000u
+/* Decimation Rate of the PDM/PCM block. Typical value is 64 */
+#define DECIMATION_RATE             64u
+/* Audio Subsystem Clock. Typical values depends on the desire sample rate:
+- 8/16/48kHz    : 24.576 MHz
+- 22.05/44.1kHz : 22.579 MHz */
+#define AUDIO_SYS_CLOCK_HZ          24576000u
+/* PDM/PCM Pins */
+#define PDM_DATA                    P10_5
+#define PDM_CLK                     P10_4
+
+void pdm_pcm_isr_handler(void *arg, cyhal_pdm_pcm_event_t event);
+void pdm_clock_init(void);
+
+/* Interrupt flags */
+volatile bool button_flag = false;
+volatile bool pdm_pcm_flag = true;
+
+/* Volume variables */
+uint32_t volume = 0;
+uint32_t noise_threshold = THRESHOLD_HYSTERESIS;
+
+/* HAL Object */
+cyhal_pdm_pcm_t pdm_pcm;
+cyhal_clock_t   audio_clock;
+cyhal_clock_t   pll_clock;
+
+/* HAL Config */
+const cyhal_pdm_pcm_cfg_t pdm_pcm_cfg =
+{
+    .sample_rate     = SAMPLE_RATE_HZ,
+    .decimation_rate = DECIMATION_RATE,
+    .mode            = CYHAL_PDM_PCM_MODE_STEREO,
+    .word_length     = 16,  /* bits */
+    .left_gain       = 0,   /* dB */
+    .right_gain      = 0,   /* dB */
+};
+
+int16_t  audio_frame[FRAME_SIZE] = {0};
+
+void setup_PDM_PDL(void);
+void loop_PDM_PDL(void);
+void PCM_ISR_Handler(void);
 /*******************************************************************************
 * Function Definitions
 *******************************************************************************/
@@ -141,6 +198,9 @@ int main(void)
 
     /* Enable global interrupts */
     __enable_irq();
+    // enabling PDM microphone
+    setup_PDM_PDL();
+
     // enabling vref
     Cy_SysAnalog_Init(&AREF_config);
     Cy_SysAnalog_Enable();
@@ -152,6 +212,7 @@ int main(void)
 
     cy_retarget_io_init(CYBSP_DEBUG_UART_TX, CYBSP_DEBUG_UART_RX,
                                      CY_RETARGET_IO_BAUDRATE);
+    printf("\x1b[2J\x1b[;H");
     printf( "hallo \r\n");
     Cy_SysClk_ClkTimerDisable();
 	Cy_SysClk_ClkTimerSetSource(CY_SYSCLK_CLKTIMER_IN_IMO);
@@ -170,6 +231,8 @@ int main(void)
 
 	// enabling interrupt pin
 	setup_interrupt();
+
+
 
     int32_t value1, value2 = 0;
     uint32_t tickValue = 0;
@@ -206,25 +269,42 @@ int main(void)
 			printf("ticking %u  : %u : %u \r\n", value1, value2, tickValue);
 			printf("thermistor : %f  | %f%cC\r\n", thermistor, temperature, (char)176);
 
+//			pdm_loop();
 		}
+    	loop_PDM_PDL();
+
     	if( pressed_state )
     	{
     		printf(" pressed = %d \r\n", pressed_counter);
+   /*
+    * To set duty cycle:
+    * - Need to set the period based on frequency of pwm
+    * 	 period = (tcpwm_clock_hz + (frequencyOfPWM_hz >> 1)) / frequencyOfPWM_hz;
+    * - Need to set the compare
+    * 	 compare = (uint32_t)(duty_cycle * 0.01f * period);
+    * */
+    		// get the TCPWM_Clock in HZ
+//    		uint32_t tcpwm_clk = Cy_TCPWM_
     		if( pressed_counter %2 == 0)
     		{
 //    			Cy_TCPWM_TriggerStopOrKill_Single(digitalPWM_HW, digitalPWM_NUM);
-    			Cy_TCPWM_PWM_SetPeriod0(digitalPWM_HW, digitalPWM_NUM, 16384);
+//    			Cy_TCPWM_PWM_SetPeriod0(digitalPWM_HW, digitalPWM_NUM, 16384);
+    			Cy_TCPWM_PWM_SetCompare0(digitalPWM_HW, digitalPWM_NUM, 8192);
+    			Cy_TCPWM_PWM_SetCompare1(digitalPWM_HW, digitalPWM_NUM, 8192);
+    			Cy_TCPWM_TriggerCaptureOrSwap_Single(digitalPWM_HW, digitalPWM_NUM);
+//    			Cy_TCPWM_PWM_SetCounter(digitalPWM_HW, digitalPWM_NUM, 0);
 //				Cy_TCPWM_TriggerStart_Single(digitalPWM_HW, digitalPWM_NUM);
     		}
-//    			Cy_GPIO_Clr(P13_7_PORT, P13_7_NUM);
     		else
     		{
 //    			Cy_TCPWM_TriggerStopOrKill_Single(digitalPWM_HW, digitalPWM_NUM);
-    			Cy_TCPWM_PWM_SetPeriod0(digitalPWM_HW, digitalPWM_NUM, 32767);
-//    			Cy_TCPWM_PWM_SetCounter(digitalPWM_HW, digitalPWM_NUM, 100);
+//    			Cy_TCPWM_PWM_SetPeriod0(digitalPWM_HW, digitalPWM_NUM, 32767);
+    			Cy_TCPWM_PWM_SetCompare0(digitalPWM_HW, digitalPWM_NUM, 1000);
+    			Cy_TCPWM_PWM_SetCompare1(digitalPWM_HW, digitalPWM_NUM, 1000);
+    			Cy_TCPWM_TriggerCaptureOrSwap_Single(digitalPWM_HW, digitalPWM_NUM);
+//    			Cy_TCPWM_PWM_SetCounter(digitalPWM_HW, digitalPWM_NUM, 0);
 //				Cy_TCPWM_TriggerStart_Single(digitalPWM_HW, digitalPWM_NUM);
     		}
-//    			Cy_GPIO_Set(P13_7_PORT, P13_7_NUM);
     		pressed_state =0;
     	}
 
@@ -246,4 +326,193 @@ float R2Temp(float R)
 }
 
 
+/*******************************************************************************
+* Function Name: pdm_pcm_isr_handler
+********************************************************************************
+* Summary:
+*  PDM/PCM ISR handler. Set a flag to be processed in the main loop.
+*
+* Parameters:
+*  arg: not used
+*  event: event that occurred
+*
+*******************************************************************************/
+void pdm_pcm_isr_handler(void *arg, cyhal_pdm_pcm_event_t event)
+{
+    (void) arg;
+    (void) event;
+
+    pdm_pcm_flag = true;
+}
+
+/*******************************************************************************
+* Function Name: clock_init
+********************************************************************************
+* Summary:
+*  Initialize the clocks in the system.
+*
+*******************************************************************************/
+void pdm_clock_init(void)
+{
+    /* Initialize the PLL */
+    cyhal_clock_reserve(&pll_clock, &CYHAL_CLOCK_PLL[0]);
+    cyhal_clock_set_frequency(&pll_clock, AUDIO_SYS_CLOCK_HZ, NULL);
+    cyhal_clock_set_enabled(&pll_clock, true, true);
+
+    /* Initialize the audio subsystem clock (CLK_HF[1])
+     * The CLK_HF[1] is the root clock for the I2S and PDM/PCM blocks */
+    cyhal_clock_reserve(&audio_clock, &CYHAL_CLOCK_HF[1]);
+
+    /* Source the audio subsystem clock from PLL */
+    cyhal_clock_set_source(&audio_clock, &pll_clock);
+    cyhal_clock_set_enabled(&audio_clock, true, true);
+}
+
+void pdm_init()
+{
+	pdm_clock_init();
+	/* Initialize the PDM/PCM block */
+	cyhal_pdm_pcm_init(&pdm_pcm, PDM_DATA, PDM_CLK, &audio_clock, &pdm_pcm_cfg);
+	cyhal_pdm_pcm_register_callback(&pdm_pcm, pdm_pcm_isr_handler, NULL);
+	cyhal_pdm_pcm_enable_event(&pdm_pcm, CYHAL_PDM_PCM_ASYNC_COMPLETE, CYHAL_ISR_PRIORITY_DEFAULT, true);
+	cyhal_pdm_pcm_start(&pdm_pcm);
+}
+
+void pdm_loop()
+{
+	/* Check if any microphone has data to process */
+	if (pdm_pcm_flag)
+	{
+		/* Clear the PDM/PCM flag */
+		pdm_pcm_flag = 0;
+
+		/* Reset the volume */
+		volume = 0;
+
+		/* Calculate the volume by summing the absolute value of all the
+		 * audio data from a frame */
+		for (uint32_t index = 0; index < FRAME_SIZE; index++)
+		{
+			volume += abs(audio_frame[index]);
+			printf("data %d : %i \r\n", index+1, audio_frame[index]);
+		}
+
+		/* Prepare line to report the volume */
+		printf("volume : %d \n\r", volume);
+		/* Report the volume */
+		for (uint32_t index = 0; index < (volume/VOLUME_RATIO); index++)
+		{
+			printf("-");
+		}
+		/* Setup to read the next frame */
+		cyhal_pdm_pcm_read_async(&pdm_pcm, audio_frame, FRAME_SIZE);
+	}
+}
+
+
+
+/**
+ *  PDM for microphone
+ *
+ */
+
+cy_stc_sysint_t pdm_int_cfg;
+bool PCM_flag = 0;
+
+bool get_PCM_flag(void)
+{
+	return PCM_flag;
+}
+
+void PCM_ISR_Handler(void)
+{
+    /* Set the PCM flag */
+	PCM_flag = 1;
+
+    /* Disable PCM ISR to avoid multiple calls to this ISR */
+    NVIC_DisableIRQ(pdm_int_cfg.intrSrc);
+}
+
+void setup_PDM_PDL(void)
+{
+	// need to setup interrupt first
+	pdm_int_cfg.intrSrc 		= PDM_MICROPHONE_IRQ;
+	pdm_int_cfg.intrPriority 	= 6u;
+
+	Cy_SysInt_Init(&pdm_int_cfg, PCM_ISR_Handler);
+	NVIC_EnableIRQ(pdm_int_cfg.intrSrc);
+
+	Cy_PDM_PCM_Init(PDM_MICROPHONE_HW, &PDM_MICROPHONE_config);
+	Cy_PDM_PCM_Enable(PDM_MICROPHONE_HW);
+	Cy_PDM_PCM_ClearFifo(PDM_MICROPHONE_HW);
+}
+
+
+#define UART_STRING_SIZE            32u
+#define SAMPLE_SIZE                 (4*128)
+int32_t audioSamples[128];
+/* Variable to store the volume captured by the microphone */
+volatile uint32_t volume_;
+
+/* Sum variable to calculate the volume */
+uint32_t sumVolume = 0u;
+
+/* Number of samples processed */
+uint32_t numSamples = 0u;
+
+/* Noise threshold */
+uint32_t noiseThreshold = 0u;
+
+/* Buffer to store the string to be sent over UART */
+void loop_PDM_PDL(void)
+{
+	/* Check PCM flag to process data */
+	if (PCM_flag)
+	{
+		/* Clear the PCM flag */
+		PCM_flag = 0;
+
+		/* Calculate the volume by summing the absolute value of all the data
+		 * stored in the PCM FIFO */
+		uint32_t numFifo = 128;
+		for (uint8_t id = 0; id < numFifo; id++)
+		{
+			audioSamples[id] = (int32_t) Cy_PDM_PCM_ReadFifo(PDM_MICROPHONE_HW) ;
+			sumVolume += abs(audioSamples[id]);
+		}
+		for (uint8_t id = 0; id < numFifo; id++)
+		{
+			printf("%i\r\n", audioSamples[id]/60);
+		}
+		/* Add to the number of samples */
+		numSamples += numFifo;
+
+		/* Clear the PCM interrupt */
+		Cy_PDM_PCM_ClearInterrupt(PDM_MICROPHONE_HW, PDM_INTR_RX_TRIGGER_Msk);
+
+		/* Re-enable PCM ISR */
+		NVIC_EnableIRQ(pdm_int_cfg.intrSrc);
+
+		/* Check if reached the sample size */
+		if (numSamples >= SAMPLE_SIZE)
+		{
+			/* Calculate the volume based on sample size */
+			volume = sumVolume/(SAMPLE_SIZE);
+
+			/* Reset the number of samples and the volume sum */
+			numSamples = 0;
+			sumVolume = 0;
+
+			/* Prepare line to report the volvume */
+//			printf("\n\r");
+
+			/* Report the volume over UART */
+//			for (uint8_t id = 0; id < volume;  id++)
+//			{
+//				printf('-');
+//			}
+//			printf("\r\n");
+		};
+	};
+}
 /* [] END OF FILE */
