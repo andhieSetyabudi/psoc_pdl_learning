@@ -52,11 +52,33 @@
 /*******************************************************************************
 * Macros
 *******************************************************************************/
+#define PDM_ACTIVE		0
+
+
 
 
 /*******************************************************************************
 * Global Variables
 *******************************************************************************/
+// DMA variable
+uint32_t DMA_buffer;
+uint8_t dma_done,
+		dma_error;
+void sar_dma_complete(void)
+{
+    Cy_DMA_Channel_ClearInterrupt(ADC_DMA_HW, ADC_DMA_CHANNEL);
+
+    /* Check interrupt cause to capture errors. */
+    if (CY_DMA_INTR_CAUSE_COMPLETION == Cy_DMA_Channel_GetStatus(ADC_DMA_HW, ADC_DMA_CHANNEL))
+    {
+    	dma_done = 1;
+    }
+    else
+    {
+        /* DMA error occurred while RX operations */
+    	dma_error = 1;
+    }
+}
 
 
 /*******************************************************************************
@@ -198,8 +220,15 @@ int main(void)
 
     /* Enable global interrupts */
     __enable_irq();
+    cy_retarget_io_init(CYBSP_DEBUG_UART_TX, CYBSP_DEBUG_UART_RX,
+                                         CY_RETARGET_IO_BAUDRATE);
+	printf("\x1b[2J\x1b[;H");
+	printf( "test PDL \r\n");
+
     // enabling PDM microphone
+#if PDM_ACTIVE
     setup_PDM_PDL();
+#endif
 
     // enabling vref
     Cy_SysAnalog_Init(&AREF_config);
@@ -207,13 +236,48 @@ int main(void)
     // setup adc
     Cy_SAR_Init(HW_SAR_HW,&HW_SAR_config);
     Cy_SAR_Enable(HW_SAR_HW);
+    Cy_SAR_StartConvert(HW_SAR_HW, CY_SAR_START_CONVERT_CONTINUOUS);
 
+// setup DMA
+    // setup the interrupt of DMA
+    cy_stc_sysint_t SAR_DMA_INT_cfg =
+	{
+		.intrSrc      = (IRQn_Type)ADC_DMA_IRQ,
+		.intrPriority = 7u,
+	};
+    // configure DMA
+    cy_en_dma_status_t dma_init_status;
+    /* Initialize descriptor 1 */
+	dma_init_status = Cy_DMA_Descriptor_Init(&ADC_DMA_Descriptor_0, &ADC_DMA_Descriptor_0_config);
+	if (dma_init_status!=CY_DMA_SUCCESS)
+	{
+		printf("\x1b[2J\x1b[;H");
+		printf( "DMA error on init Descriptor! \r\n");
+		while(1);
+	}
 
+	dma_init_status = Cy_DMA_Channel_Init(ADC_DMA_HW, ADC_DMA_CHANNEL, &ADC_DMA_channelConfig);
+	if (dma_init_status!=CY_DMA_SUCCESS)
+	{
+		printf("\x1b[2J\x1b[;H");
+		printf( "DMA error on init Channel ! \r\n");
+		while(1);
+	}
+	/* Set source and destination address for descriptor */
+	Cy_DMA_Descriptor_SetSrcAddress(&ADC_DMA_Descriptor_0, (uint32_t*)&(SAR->CHAN_RESULT[0]));
+	Cy_DMA_Descriptor_SetDstAddress(&ADC_DMA_Descriptor_0, &DMA_buffer);
 
-    cy_retarget_io_init(CYBSP_DEBUG_UART_TX, CYBSP_DEBUG_UART_RX,
-                                     CY_RETARGET_IO_BAUDRATE);
-    printf("\x1b[2J\x1b[;H");
-    printf( "hallo \r\n");
+	Cy_DMA_Channel_SetDescriptor(ADC_DMA_HW, ADC_DMA_CHANNEL, &ADC_DMA_Descriptor_0);
+
+	/* Initialize and enable interrupt from SAR_DMA */
+	(void)Cy_SysInt_Init (&SAR_DMA_INT_cfg, sar_dma_complete);
+	NVIC_EnableIRQ(SAR_DMA_INT_cfg.intrSrc);
+	/* Enable DMA interrupt source. */
+	Cy_DMA_Channel_SetInterruptMask(ADC_DMA_HW, ADC_DMA_CHANNEL, CY_DMA_INTR_MASK);
+	/* Enable channel and DMA block to start descriptor execution process */
+	Cy_DMA_Channel_Enable(ADC_DMA_HW, ADC_DMA_CHANNEL);
+	Cy_DMA_Enable(ADC_DMA_HW);
+
     Cy_SysClk_ClkTimerDisable();
 	Cy_SysClk_ClkTimerSetSource(CY_SYSCLK_CLKTIMER_IN_IMO);
 	Cy_SysClk_ClkTimerSetDivider(7U);
@@ -235,9 +299,45 @@ int main(void)
 
 
     int32_t value1, value2 = 0;
+    int32_t last_value_adc = 0;
     uint32_t tickValue = 0;
+    float thermistor = 0;
+    Cy_GPIO_Clr(P10_3_PORT, P10_3_NUM);
+    Cy_GPIO_Clr(P10_0_PORT, P10_0_NUM);
     for (;;)
     {
+    	if( getTick()- tickValue >= 1000 )
+    	{
+    		if( value1 )
+    		{
+    			Cy_GPIO_Clr(P10_3_PORT, P10_3_NUM);
+				Cy_GPIO_Set(P10_0_PORT, P10_0_NUM);
+				value1 = 0;
+    		}else
+    		{
+    			Cy_GPIO_Set(P10_3_PORT, P10_3_NUM);
+				Cy_GPIO_Clr(P10_0_PORT, P10_0_NUM);
+				value1 = 1;
+    		}
+    		last_value_adc = (int32)DMA_buffer;
+//    		int32_t result1 = Cy_SAR_GetResult16(SAR, 0);
+//    		printf("adc value %i  \r\n", result1);
+    		tickValue = getTick();
+    	}
+    	if( dma_done )
+    	{
+    		printf("dma buffer %i  \r\n",(int32) DMA_buffer);
+    		if( !value1 )
+    			thermistor = ( (float)((int32)DMA_buffer)*10000.f ) / (float)last_value_adc;
+    		else
+    			thermistor = ( (float)last_value_adc*10000.f ) / (float)((int32)DMA_buffer);
+//    		if(last_value_adc != (int32)DMA_buffer )
+//    			last_value_adc = (int32)DMA_buffer;
+    		float temperature = R2Temp(thermistor);
+    		printf("thermistor : %f  | %f%cC\r\n", thermistor, temperature, (char)176);
+    		dma_done = 0;
+    	}
+    	/*
     	if( getTick()- tickValue >= 1000 )
 		{
     		tickValue = getTick();//Cy_TCPWM_Counter_GetCounter(my_tick_counter_HW, my_tick_counter_NUM);
@@ -269,9 +369,11 @@ int main(void)
 			printf("ticking %u  : %u : %u \r\n", value1, value2, tickValue);
 			printf("thermistor : %f  | %f%cC\r\n", thermistor, temperature, (char)176);
 
-//			pdm_loop();
 		}
+		*/
+#if PDM_ACTIVE
     	loop_PDM_PDL();
+#endif
 
     	if( pressed_state )
     	{
